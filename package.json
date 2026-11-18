@@ -1,0 +1,26 @@
+{
+  "name": "acha-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "阿茶 AI 实验室 · 微信公众号工作台（Web 操作中枢）",
+  "scripts": {
+    "dev": "PATH=\"/Users/swartea/.kimi-code/bin:$PATH\" next dev -p 8787",
+    "build": "rm -rf .next && next build --turbopack",
+    "start": "PATH=\"/Users/swartea/.kimi-code/bin:$PATH\" next start -p 8787 -H 0.0.0.0",
+    "lint": "next lint",
+    "test": "node --import ./tests/resolve-ts.mjs --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
+}

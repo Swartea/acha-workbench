@@ -1,0 +1,44 @@
+{
+  "feeds": [
+    {
+      "id": "hn-best",
+      "name": "Hacker News 热门",
+      "url": "https://hnrss.org/best?points=100",
+      "enabled": true
+    },
+    {
+      "id": "arxiv-cs-ai",
+      "name": "arXiv cs.AI",
+      "url": "https://rss.arxiv.org/rss/cs.AI",
+      "enabled": true
+    },
+    {
+      "id": "arxiv-cs-cl",
+      "name": "arXiv cs.CL",
+      "url": "https://rss.arxiv.org/rss/cs.CL",
+      "enabled": false
+    },
+    {
+      "id": "hn-newest",
+      "name": "Hacker News 最新（≥50 分）",
+      "url": "https://hnrss.org/newest?points=50",
+      "enabled": false
+    },
+    {
+      "id": "rsshub-gh-trending",
+      "name": "GitHub Trending",
+      "url": "http://127.0.0.1:1200/github/trending/daily/any",
+      "enabled": true,
+      "local": true,
+      "note": "本机 RSSHub（colima，端口 1200）；GH trending 需要 GITHUB_ACCESS_TOKEN（已配在 ~/rsshub/.env）"
+    },
+    {
+      "id": "rsshub-ph",
+      "name": "Product Hunt",
+      "url": "http://127.0.0.1:1200/producthunt/feed",
+      "enabled": true,
+      "local": true,
+      "note": "本机 RSSHub；注意 localhost 会被解析成 ::1 连不上，必须用 127.0.0.1"
+    }
+  ]
+}

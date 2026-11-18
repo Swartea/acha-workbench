@@ -1,0 +1,14 @@
+{
+  "name": "wechat-draft",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Obsidian Markdown to WeChat Official Account draft (no publish)",
+  "scripts": {
+    "draft": "node draft.mjs"
+  },
+  "dependencies": {
+    "@wenyan-md/cli": "^2.0.12",
+    "gray-matter": "^4.0.3"
+  }
+}
