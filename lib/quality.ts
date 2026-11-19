@@ -82,8 +82,8 @@ function checkImages(body: string, mdDir: string): ImageCheck[] {
 }
 
 export function runQuality(file: string) {
-  const abs = path.resolve(file);
-  if (!isUnder(MANUSCRIPT_DIR, abs)) {
+  const abs = path.resolve(MANUSCRIPT_DIR, file);
+  if (abs !== MANUSCRIPT_DIR && !abs.startsWith(MANUSCRIPT_DIR + path.sep)) {
     return { ok: false as const, error: '只允许检查 01-内容库/稿件 下的文件' };
   }
   if (!fs.existsSync(abs)) return { ok: false as const, error: '稿件不存在' };

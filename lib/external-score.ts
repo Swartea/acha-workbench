@@ -73,8 +73,10 @@ export function buildCleanBody(raw: string): string {
  * @param file - 01-内容库/稿件 下的绝对路径。
  */
 export function runExternalAiScore(file: string): ExternalScore | ExternalScoreFailure {
-  const abs = path.resolve(file);
-  if (!isUnder(MANUSCRIPT_DIR, abs)) return { ok: false, error: '只允许评分 01-内容库/稿件 下的文件' };
+  const abs = path.resolve(MANUSCRIPT_DIR, file);
+  if (abs !== MANUSCRIPT_DIR && !abs.startsWith(MANUSCRIPT_DIR + path.sep)) {
+    return { ok: false, error: '只允许评分 01-内容库/稿件 下的文件' };
+  }
   if (!fs.existsSync(abs)) return { ok: false, error: '稿件不存在' };
 
   const dir = publisherDir();

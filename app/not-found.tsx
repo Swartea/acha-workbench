@@ -11,7 +11,7 @@ export default function NotFound() {
         </div>
       </header>
       <div className="card">
-        <Link href="/manuscripts" className="btn primary">回稿件流水线</Link>
+        <Link href="/autopilot" className="btn primary">回自主写稿</Link>
       </div>
     </div>
   );

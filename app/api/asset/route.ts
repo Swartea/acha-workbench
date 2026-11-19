@@ -19,7 +19,9 @@ export async function GET(req: Request) {
   const p = new URL(req.url).searchParams.get('p') ?? '';
   if (!p) return new Response('缺少 p 参数', { status: 400 });
   const abs = path.resolve(MANUSCRIPT_DIR, p);
-  if (!isUnder(MANUSCRIPT_DIR, abs)) return new Response('forbidden', { status: 403 });
+  if (abs !== MANUSCRIPT_DIR && !abs.startsWith(MANUSCRIPT_DIR + path.sep)) {
+    return new Response('forbidden', { status: 403 });
+  }
   if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
     return new Response('not found', { status: 404 });
   }

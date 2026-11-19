@@ -5,7 +5,7 @@ import Nav from '@/components/Nav';
 
 export const metadata: Metadata = {
   title: '阿茶 AI 实验室 · 工作台',
-  description: '微信公众号工作台：稿件流水线 / 选题 / 发布台 / 核实',
+  description: '微信公众号工作台：自主写稿 / 雷达 / 核实 / 质检',
 };
 
 function lanAddress(): string {

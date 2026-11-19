@@ -341,12 +341,28 @@ async function researchPage(entry: StoredFoloEntry): Promise<ResearchResult> {
     },
   ];
 
-  // 从正文里抽 1-2 条可核外链（官方文档优先），补足来源台账。
+  // 从正文里抽 1-2 条可核外链补来源台账；跨域的排前面（避免台账全一个域）。
   const banned = /(^|\.)(x|twitter|facebook|linkedin|threads|bsky|t\.co)\./i;
-  const links = extractLinks(rawContent)
-    .filter((url) => /^https?:\/\//i.test(url) && !banned.test(new URL(url).hostname))
-    .filter((url) => url.replace(/[?#].*$/, '') !== entry.url.replace(/[?#].*$/, ''))
-    .slice(0, 2);
+  const entryHost = (() => {
+    try {
+      return new URL(entry.url).hostname.replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  })();
+  const crossDomain: string[] = [];
+  const sameDomain: string[] = [];
+  for (const url of extractLinks(rawContent)) {
+    try {
+      if (!/^https?:\/\//i.test(url) || banned.test(new URL(url).hostname)) continue;
+      if (url.replace(/[?#].*$/, '') === entry.url.replace(/[?#].*$/, '')) continue;
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      (host && host !== entryHost ? crossDomain : sameDomain).push(url);
+    } catch {
+      /* 畸形链接跳过 */
+    }
+  }
+  const links = [...crossDomain, ...sameDomain].slice(0, 2);
   for (const link of links) {
     let linkQuote = '文中引用';
     try {
@@ -396,6 +412,129 @@ export async function gatherResearch(entry: StoredFoloEntry): Promise<ResearchRe
   const gh = parseGitHubRepoUrl(entry.url);
   if (gh) return researchGitHub(entry, gh);
   return researchPage(entry);
+}
+
+interface HnHit {
+  title?: string | null;
+  url?: string | null;
+  objectID?: string;
+  points?: number;
+  num_comments?: number;
+}
+
+/** HN 社区讨论（免 key JSON API）：给单一来源域的选题补一条外部佐证；不可达就空手而归。 */
+async function searchHackerNews(query: string): Promise<ResearchSource[]> {
+  try {
+    const q = encodeURIComponent(query.replace(/\s+/g, ' ').slice(0, 80));
+    const j = await fetchJson<{ hits?: HnHit[] }>(
+      `https://hn.algolia.com/api/v1/search?query=${q}&tags=story&hitsPerPage=5`,
+    );
+    const top = (j.hits ?? []).filter((h) => (h.points ?? 0) >= 3)[0];
+    if (!top?.objectID) return [];
+    const itemUrl = `https://news.ycombinator.com/item?id=${top.objectID}`;
+    let quote = `HN ${top.points ?? 0} points / ${top.num_comments ?? 0} 评论`;
+    if (top.url) {
+      try {
+        const text = htmlToText(await fetchText(top.url, 8000)).replace(/\s+/g, ' ').trim();
+        if (text) quote = `${quote} · ${text.slice(0, 300)}`;
+      } catch {
+        /* 保留纯计数 quote */
+      }
+    }
+    return [
+      {
+        claim: `Hacker News 社区讨论：${top.title ?? ''}（${top.points ?? 0} points）`,
+        url: itemUrl,
+        level: 'S3',
+        accessed: today(),
+        quote,
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+/** cn.bing.com 网页搜索兜底（免 key、直连可达）：抽前几条外部结果页作交叉来源。 */
+async function searchBingCN(query: string, excludeHosts: Set<string>): Promise<ResearchSource[]> {
+  try {
+    const q = encodeURIComponent(query.slice(0, 80));
+    const html = await fetchText(`https://cn.bing.com/search?q=${q}&count=10`, 60000);
+    const links = [...html.matchAll(/<h2[^>]*><a[^>]+href="(https?:\/\/[^"]+)"/gi)]
+      .map((m) => m[1].replace(/&amp;/g, '&'))
+      .filter((u) => {
+        try {
+          const host = new URL(u).hostname.replace(/^www\./, '');
+          return !/(^|\.)bing\.com$/i.test(host) && !excludeHosts.has(host);
+        } catch {
+          return false;
+        }
+      });
+    const sources: ResearchSource[] = [];
+    for (const url of links.slice(0, 2)) {
+      try {
+        const text = htmlToText(await fetchText(url, 8000)).replace(/\s+/g, ' ').trim();
+        if (text.length < 60) continue;
+        let label = url;
+        try {
+          const u = new URL(url);
+          label = `${u.hostname}${u.pathname}`.slice(0, 120);
+        } catch {
+          /* 保留原 URL */
+        }
+        sources.push({
+          claim: `搜索交叉：${label}`,
+          url,
+          level: officialLevel(url),
+          accessed: today(),
+          quote: text.slice(0, 400),
+        });
+        if (sources.length >= 2) break;
+      } catch {
+        /* 抓不到就跳过该结果 */
+      }
+    }
+    return sources;
+  } catch {
+    return [];
+  }
+}
+
+function sourceHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * 单一来源域时补独立交叉来源：先 HN（社区讨论，S3），不够再 Bing CN。
+ * 都抓不到就维持原样——宁可诚实单源，也不造第二来源。
+ */
+export async function supplementSources(
+  research: ResearchResult,
+  queryTitle: string,
+): Promise<ResearchResult> {
+  const hosts = new Set(research.sources.map((s) => sourceHost(s.url)));
+  const existingUrls = new Set(research.sources.map((s) => s.url.replace(/[?#].*$/, '')));
+  const candidates = [
+    ...(await searchHackerNews(queryTitle)),
+    ...(await searchBingCN(queryTitle, hosts)),
+  ];
+  const added: ResearchSource[] = [];
+  for (const candidate of candidates) {
+    const key = candidate.url.replace(/[?#].*$/, '');
+    if (existingUrls.has(key) || hosts.has(sourceHost(candidate.url))) continue;
+    existingUrls.add(key);
+    added.push(candidate);
+    if (added.length >= 2) break;
+  }
+  if (!added.length) return research;
+  const markdown = `${research.markdown}\n\n## 独立交叉来源\n${added
+    .map((s) => `- [${s.level}] ${s.claim}\n  ${s.url}\n  摘录：${s.quote.slice(0, 200)}`)
+    .join('\n')}`;
+  return { ...research, sources: [...research.sources, ...added], markdown };
 }
 
 function candidateLine(entry: StoredFoloEntry, i: number): string {

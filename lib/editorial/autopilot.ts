@@ -1,7 +1,13 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { AUTOPILOT_DATA_DIR, CHECKER, MANUSCRIPT_DIR, REWORK_DIR, WS_ROOT } from '../paths';
+import {
+  AUTOPILOT_DATA_DIR,
+  CHECKER,
+  MANUSCRIPT_DIR,
+  REWORK_DIR,
+  WS_ROOT,
+} from '../paths';
 import { assertUnder } from '../guard';
 import {
   addAutopilotEvent,
@@ -14,7 +20,7 @@ import {
   type AutopilotEvent,
   type AutopilotRun,
 } from '../db';
-import { callModel, modelAvailable, type ModelKey } from '../experts/runtime';
+import { callModel, callModelGuarded, modelAvailable, type ModelKey } from '../experts/runtime';
 import { pullFoloRadar } from '../folo';
 import { readRadarAll } from '../radar';
 import type { StoredFoloEntry } from '../folo-core';
@@ -26,9 +32,12 @@ import {
   gatherResearch,
   pickTopic,
   selectCandidates,
+  supplementSources,
   type ResearchResult,
   type ResearchSource,
 } from './research';
+import { checkLayoutMarkdown, type LayoutReport } from './layout';
+import { generateFigures, type FiguresResult } from './figures';
 
 const MAX_REVISIONS = 2;
 
@@ -54,6 +63,8 @@ export interface AutopilotDetail {
   research: string;
   checks: CheckResult | null;
   cover: CoverMeta | null;
+  figures: FiguresResult | null;
+  layout: LayoutReport | null;
   files: string[];
 }
 
@@ -195,6 +206,7 @@ function revisionPrompt(article: Article, check: CheckResult, research: Research
     WRITING_RULES,
     '',
     '下面这篇稿子没有过机器检查。只改未过项，保留已经成立的结构和判断。',
+    '改动最小化：能改一句不改一段，保留原有文风和已核实的事实表述，不要重写全文。',
     '',
     '## 当前稿',
     JSON.stringify(
@@ -263,11 +275,11 @@ async function writeArticle(
   model: ModelKey,
   workDir: string,
   sources: ResearchSource[],
+  onFail?: (message: string) => void,
 ): Promise<Article> {
-  const res = await callModel(model, articlePrompt(research, brief, sources), workDir);
-  if (!res.ok) throw new Error(`写稿模型失败：${res.error ?? '未知错误'}`);
-  const parsed = extractJsonObject<Record<string, unknown>>(res.text);
-  const article = normalizeArticle(parsed, brief.topic || research.title, sources, parsed ? '' : res.text);
+  const text = await callModelGuarded(model, articlePrompt(research, brief, sources), workDir, onFail);
+  const parsed = extractJsonObject<Record<string, unknown>>(text);
+  const article = normalizeArticle(parsed, brief.topic || research.title, sources, parsed ? '' : text);
   if (!article.body.trim()) throw new Error('写稿模型没有返回正文');
   return article;
 }
@@ -279,11 +291,11 @@ async function reviseArticle(
   model: ModelKey,
   workDir: string,
   sources: ResearchSource[],
+  onFail?: (message: string) => void,
 ): Promise<Article> {
-  const res = await callModel(model, revisionPrompt(article, check, research), workDir);
-  if (!res.ok) throw new Error(`返工模型失败：${res.error ?? '未知错误'}`);
-  const parsed = extractJsonObject<Record<string, unknown>>(res.text);
-  const revised = normalizeArticle(parsed, article.title, sources, parsed ? '' : res.text);
+  const text = await callModelGuarded(model, revisionPrompt(article, check, research), workDir, onFail);
+  const parsed = extractJsonObject<Record<string, unknown>>(text);
+  const revised = normalizeArticle(parsed, article.title, sources, parsed ? '' : text);
   if (!revised.body.trim()) throw new Error('返工模型没有返回正文');
   return revised;
 }
@@ -357,8 +369,10 @@ function writeRework(runId: number, article: Article, check: CheckResult, articl
 }
 
 function pickModel(requested?: string): ModelKey {
-  const order: ModelKey[] = ['kimi', 'minimax', 'glm'];
-  const want = (requested === 'minimax' || requested === 'glm' || requested === 'kimi' ? requested : 'kimi') as ModelKey;
+  const order: ModelKey[] = ['kimi', 'minimax', 'glm', 'deepseek'];
+  const want = (
+    requested === 'minimax' || requested === 'glm' || requested === 'deepseek' || requested === 'kimi' ? requested : 'kimi'
+  ) as ModelKey;
   if (modelAvailable(want)) return want;
   const fallback = order.find((m) => modelAvailable(m));
   if (!fallback) throw new Error('没有可用的模型 CLI（kimi / minimax / glm 都不可用）');
@@ -403,8 +417,27 @@ async function runAutopilot(
     await pullFoloRadar({ limit: 30 });
     entries = readRadarAll();
   }
+  // 历史运行写过的线索不再选（避免连续几轮撞同一篇）；调用方明确指定条目时除外。
+  let skippedWritten = 0;
+  if (!options.entryId) {
+    const written = new Set(
+      listAutopilotRuns(50)
+        .map((r) => (r.source_url ?? '').replace(/[?#].*$/, '').replace(/\/$/, ''))
+        .filter(Boolean),
+    );
+    const before = entries.length;
+    entries = entries.filter((e) => !written.has(e.url.replace(/[?#].*$/, '').replace(/\/$/, '')));
+    skippedWritten = before - entries.length;
+    if (skippedWritten) log('pick', `跳过 ${skippedWritten} 条已写过的线索，避免撞题`);
+  }
   const candidates = selectCandidates(entries, 8);
-  if (!candidates.length) throw new Error('雷达没有可用候选（需要公开原文/仓库，社交平台已排除）');
+  if (!candidates.length) {
+    throw new Error(
+      skippedWritten
+        ? `雷达 ${skippedWritten} 条候选都已写过，没有新题（先更新雷达源）`
+        : '雷达没有可用候选（需要公开原文/仓库，社交平台已排除）',
+    );
+  }
   let picked: { entry: StoredFoloEntry; reason: string; angle: string };
   if (options.entryId) {
     const entry = entries.find((e) => e.id === options.entryId);
@@ -427,7 +460,28 @@ async function runAutopilot(
   // 2. 研究
   updateAutopilotRun(runId, { stage: 'research' });
   log('research', '抓官方仓库/原文，建立来源台账…', 'running');
-  const research = await gatherResearch(picked.entry);
+  let research = await gatherResearch(picked.entry);
+  // 台账只有一个域时补独立交叉来源（HN / Bing CN）；抓不到维持单源，不硬凑。
+  const domainCount = new Set(
+    research.sources.map((s) => {
+      try {
+        return new URL(s.url).hostname.replace(/^www\./, '');
+      } catch {
+        return s.url;
+      }
+    }),
+  ).size;
+  if (domainCount <= 1) {
+    log('research', '来源只有单一域，尝试补独立交叉来源（HN / Bing）…', 'running');
+    research = await supplementSources(research, picked.entry.title);
+    const gained = research.sources.filter((s) => s.claim.startsWith('Hacker News') || s.claim.startsWith('搜索交叉'));
+    log(
+      'research',
+      gained.length ? `补到 ${gained.length} 条独立交叉来源` : '没抓到独立交叉来源，维持单源（检查会提醒）',
+      gained.length ? 'ok' : 'warn',
+      { added: gained.map((s) => ({ claim: s.claim, url: s.url })) },
+    );
+  }
   write(assertUnder(runDir, 'research.md'), research.markdown);
   log('research', `研究完成：${research.sources.length} 条来源，材料 ${research.markdown.length} 字`, 'ok', {
     sources: research.sources.map((s) => ({ claim: s.claim, url: s.url, level: s.level })),
@@ -444,7 +498,8 @@ async function runAutopilot(
   updateAutopilotRun(runId, { stage: 'draft' });
   log('draft', '写完整文章…', 'running');
   const sources = sourceList(research);
-  let article = await writeArticle(research, brief, model, runDir, sources);
+  const onModelFail = (stage: string) => (message: string) => log(stage, message, 'warn');
+  let article = await writeArticle(research, brief, model, runDir, sources, onModelFail('draft'));
   let articleFile = path.join(runDir, 'draft-v1.md');
   write(articleFile, articleMarkdown(article, runId));
   log('draft', `初稿完成：${article.title}（${countCjk(article.body)} 字）`, 'ok', {
@@ -467,7 +522,7 @@ async function runAutopilot(
   while (check.blockers.length && attempts <= MAX_REVISIONS) {
     updateAutopilotRun(runId, { stage: 'revise' });
     log('revise', `第 ${attempts} 轮返工：原模型带 ${check.blockers.length} 个未过项修订…`, 'running');
-    article = await reviseArticle(article, check, research, model, runDir, sources);
+    article = await reviseArticle(article, check, research, model, runDir, sources, onModelFail('revise'));
     attempts++;
     articleFile = path.join(runDir, `draft-v${attempts}.md`);
     write(articleFile, articleMarkdown(article, runId));
@@ -495,6 +550,30 @@ async function runAutopilot(
       blockers: check.blockers,
     });
     return;
+  }
+
+  // 5.5 正文配图：把【图 N】占位符替换成真实图片（非阻断；失败保留占位符）
+  updateAutopilotRun(runId, { stage: 'figures' });
+  log('figures', '按配图位生成正文配图（模型出 HTML → chromium 截图）…', 'running');
+  let figures: FiguresResult | null = null;
+  try {
+    figures = await generateFigures(article, model, runDir, runId, research, onModelFail('figures'));
+    write(assertUnder(runDir, 'figures.json'), JSON.stringify(figures, null, 2));
+    for (const w of figures.warnings) log('figures', w, 'warn');
+    if (figures.error) log('figures', `配图中断：${figures.error}`, 'warn');
+    log(
+      'figures',
+      figures.figures.length
+        ? `已生成 ${figures.figures.length} 张配图并替换占位符`
+        : '没有生成正文配图（无配图位或全部未过门槛）',
+      figures.figures.length ? 'ok' : 'warn',
+      { figures: figures.figures.map((f) => ({ slot: f.slot, rel: f.rel })) },
+    );
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    figures = { ok: false, figures: [], warnings: [], error: message.slice(0, 500) };
+    write(assertUnder(runDir, 'figures.json'), JSON.stringify(figures, null, 2));
+    log('figures', `配图环节失败（保留占位符继续）：${message.slice(0, 200)}`, 'warn');
   }
 
   // 6. 封面（Codex 内置 imagegen；不调外部付费 API）
@@ -529,6 +608,22 @@ async function runAutopilot(
     };
     log('cover', `封面生成失败：${message}；继续交付无封面稿`, 'warn');
   }
+
+  // 6.5 排版预检（markdown 结构风险；提醒级，不拦稿）
+  updateAutopilotRun(runId, { stage: 'layout' });
+  log('layout', '排版破版风险预检（图片存在性 / 围栏 / 表格 / 标签残留）…', 'running');
+  const layout = checkLayoutMarkdown(fs.readFileSync(articleFile, 'utf8'));
+  write(assertUnder(runDir, 'layout.json'), JSON.stringify(layout, null, 2));
+  const layoutFails = layout.checks.filter((c) => !c.pass);
+  log(
+    'layout',
+    layoutFails.length
+      ? `排版预检 ${layoutFails.length} 项提醒：${layoutFails.map((f) => f.label).join('、')}`
+      : '排版预检全过',
+    layoutFails.length ? 'warn' : 'ok',
+    { checks: layout.checks },
+  );
+  for (const w of layout.warnings) log('layout', w, 'warn');
 
   // 7. 交付
   updateAutopilotRun(runId, { stage: 'save' });
@@ -566,6 +661,8 @@ async function runAutopilot(
     attempts,
     check,
     cover,
+    figures,
+    layout,
     files: { article: finalFile, cover: cover?.file ?? null, runDir },
   });
 
@@ -644,7 +741,19 @@ export function getAutopilotDetail(runId: number): AutopilotDetail | null {
       /* 保留空 prompt */
     }
   }
-  return { run, events: listAutopilotEvents(runId), article, research, checks, cover, files };
+  let figures: FiguresResult | null = null;
+  let layout: LayoutReport | null = null;
+  try {
+    if (run.run_dir) {
+      const fp = assertUnder(run.run_dir, 'figures.json');
+      if (fs.existsSync(fp)) figures = JSON.parse(fs.readFileSync(fp, 'utf8')) as FiguresResult;
+      const lp = assertUnder(run.run_dir, 'layout.json');
+      if (fs.existsSync(lp)) layout = JSON.parse(fs.readFileSync(lp, 'utf8')) as LayoutReport;
+    }
+  } catch {
+    /* figures/layout 解析失败不阻塞详情展示 */
+  }
+  return { run, events: listAutopilotEvents(runId), article, research, checks, cover, figures, layout, files };
 }
 
 export function latestAutopilotDetail(): AutopilotDetail | null {

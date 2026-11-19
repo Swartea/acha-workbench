@@ -94,15 +94,12 @@ const ICONS: Record<string, React.ReactNode> = {
 };
 
 const MAIN = [
-  { href: '/topics', label: '选题', icon: 'topics' },
-  { href: '/manuscripts', label: '稿件', icon: 'manuscripts' },
-  { href: '/publish', label: '发布', icon: 'publish' },
+  { href: '/autopilot', label: '自主写稿', icon: 'automation' },
   { href: '/radar', label: '雷达', icon: 'radar' },
   { href: '/intake', label: '投素材', icon: 'inbox' },
 ];
 
 const TOOLS = [
-  { href: '/autopilot', label: '自主写稿', icon: 'automation' },
   { href: '/figures', label: '配图', icon: 'figures' },
   { href: '/verify', label: '核实', icon: 'verify' },
   { href: '/quality', label: '质检', icon: 'quality' },

@@ -9,7 +9,8 @@ import PasscodeGate from '@/components/PasscodeGate';
 import { listWorkbenchManuscripts } from '@/lib/experts/context';
 import { TASK_LABELS } from '@/lib/experts/prompts';
 import { ROLES } from '@/lib/experts/roles';
-import { modelAvailable } from '@/lib/experts/runtime';
+import { apiKeyEnvName, keyPresent, modelAvailable } from '@/lib/experts/runtime';
+import ExpertsSetup, { type ModelStatus } from '@/components/ExpertsSetup';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,12 +127,27 @@ export default async function ExpertsPage({
   const selSteps = sp.run ? getExpertRunSteps(sp.run) : [];
   const resultText =
     selSteps.length && sel?.allOk ? readText(selSteps[selSteps.length - 1].output_file) : null;
+  const MODEL_META: Array<{ key: 'glm' | 'kimi' | 'minimax' | 'deepseek'; label: string; carrier: string }> = [
+    { key: 'glm', label: 'GLM', carrier: 'claude CLI → 智谱 Anthropic 兼容端点' },
+    { key: 'kimi', label: 'Kimi', carrier: 'Kimi CLI（官方原生）' },
+    { key: 'minimax', label: 'MiniMax', carrier: 'mcode CLI（agent-orchestrator）' },
+    { key: 'deepseek', label: 'DeepSeek', carrier: 'claude CLI → DeepSeek Anthropic 兼容端点' },
+  ];
+  const modelStatus: ModelStatus[] = MODEL_META.map((m) => ({
+    key: m.key,
+    label: m.label,
+    carrier: m.carrier,
+    binOk: modelAvailable(m.key),
+    keyOk: keyPresent(m.key),
+    keyEnv: apiKeyEnvName(m.key),
+  }));
   const models = {
     glm: modelAvailable('glm'),
     kimi: modelAvailable('kimi'),
     minimax: modelAvailable('minimax'),
+    deepseek: modelAvailable('deepseek'),
   };
-  const allModels = models.glm && models.kimi && models.minimax;
+  const allModels = Object.values(models).every(Boolean);
 
   return (
     <div className="page">
@@ -144,16 +160,21 @@ export default async function ExpertsPage({
           </p>
         </div>
         <span className={`pill ${allModels ? 'ok' : 'warn'}`}>
-          GLM {models.glm ? '✓' : '未装'} · Kimi {models.kimi ? '✓' : '未装'} · MiniMax {models.minimax ? '✓' : '未装'}
+          GLM {models.glm ? '✓' : '未装'} · Kimi {models.kimi ? '✓' : '未装'} · MiniMax{' '}
+          {models.minimax ? '✓' : '未装'} · DeepSeek {models.deepseek ? '✓' : '未装'}
         </span>
       </header>
 
       <PasscodeGate />
 
+      <ExpertsSetup models={modelStatus} />
+
       {!models.glm && (
         <div className="hero-note">
-          <b>GLM（zcode-official）未安装</b>：三个任务的第一步都是总编，点「运行专家任务」会立刻失败。
-          装好 GLM，或用 <code className="mono">WB_BIN_GLM</code> 指到一个可执行文件再来；Kimi / MiniMax 通道状态见右上。
+          <b>GLM 通道不可用</b>：任务的第一步都是总编（GLM），点「运行专家任务」会立刻失败。
+          在上面的「模型通道」卡里点「一键安装 / 体检」，按提示配 <code className="mono">ZHIPUAI_API_KEY</code>
+          （GLM 走 claude CLI + 智谱官方 Anthropic 兼容端点）；或用 <code className="mono">WB_BIN_GLM</code>{' '}
+          指到别的可执行文件。
         </div>
       )}
 

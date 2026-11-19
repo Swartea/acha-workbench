@@ -1,9 +1,9 @@
 import { redirect } from 'next/navigation';
 
 /**
- * 「今日」页已撤（2026-11-12）：内容并到稿件流水线，根路径直接跳过去。
- * 账号三件在 /publish、标题在 /titles、复盘在 /review，这里不再重复一份。
+ * 「今日」页已撤（2026-11-12）；选题 / 稿件 / 发布三页也已撤（2026-11-19，
+ * 自动写稿闭环后不再人工排期），根路径跳自主写稿——现在的主入口。
  */
 export default function Home() {
-  redirect('/manuscripts');
+  redirect('/autopilot');
 }

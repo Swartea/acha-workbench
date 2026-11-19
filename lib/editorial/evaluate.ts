@@ -40,6 +40,69 @@ export function countCjk(s: string): number {
 }
 
 /**
+ * 正文硬数据抽取（FacTool 简化版，零模型调用）：百分比 / 金额 / 万亿次计数 /
+ * 版本号 / 其余 ≥2 位数值。图片引用和裸 URL 先剥掉（路径里的时间戳不是数据），
+ * 【图 N】【证据 N】占位符里的序号也不算。
+ */
+export function extractHardTokens(body: string): string[] {
+  const text = body
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]\(https?:[^)]*\)/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/【图\s?\d[^】]*】|【证据\s?\d[^】]*】/g, ' ');
+  const patterns = [
+    /\d[\d,]*(?:\.\d+)?\s*%/g,
+    /(?:\$|￥)\s?\d[\d,]*(?:\.\d+)?/g,
+    /\d[\d,]*(?:\.\d+)?\s?(?:万|亿|[kKmM]\b)/g,
+    /\b\d+\.\d+\.\d+\b/g,
+    /\b\d{2,}(?:\.\d+)?\b/g,
+  ];
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const re of patterns) {
+    for (const m of text.match(re) || []) {
+      const token = m.replace(/[\s,]/g, '');
+      if (token && !seen.has(token)) {
+        seen.add(token);
+        tokens.push(token);
+      }
+    }
+  }
+  return tokens;
+}
+
+/**
+ * claim 级核对：正文每个硬数据都要能溯源——台账（claim/quote/url）里有 → 过；
+ * 研究材料里有但台账没登记 → 提醒补台账行；两边都没有 → 疑似编造，拦截。
+ * 没有研究材料时跳过（无法核对，不误伤）。
+ */
+export function auditClaims(
+  article: Article,
+  research?: ResearchResult,
+): { blockers: string[]; warnings: string[] } {
+  const tokens = extractHardTokens(article.body);
+  if (!tokens.length) return { blockers: [], warnings: [] };
+  const ledger = article.sources
+    .map((s) => `${s.claim} ${s.quote} ${s.url}`)
+    .join('\n')
+    .replace(/[\s,]/g, '');
+  const material = (research?.markdown ?? '').replace(/[\s,]/g, '');
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  for (const token of tokens) {
+    if (ledger.includes(token)) continue;
+    if (material && material.includes(token)) {
+      warnings.push(`硬数据「${token}」在研究材料里有，但来源台账没登记，建议补台账行`);
+    } else {
+      blockers.push(
+        `硬数据「${token}」在来源台账和研究材料里都找不到，疑似编造；删掉该数字或补可追溯来源`,
+      );
+    }
+  }
+  return { blockers, warnings };
+}
+
+/**
  * 评审核心（纯函数）：shape 由调用方注入（autopilot.runShapeCheck 或测试桩）。
  * 平台硬上限/占位符/假实测/证据位已下沉到写作门检查器；这里保留依赖
  * article 对象与研究材料才能判的项：模板口径提醒、900 字下限、来源台账、时间限定。
@@ -111,6 +174,13 @@ export function evaluateArticleWithShape(
         break;
       }
     }
+  }
+
+  // claim 级核对（有研究材料才做；无材料时无法核对，不误伤）
+  if (research) {
+    const claimAudit = auditClaims(article, research);
+    blockers.push(...claimAudit.blockers);
+    warnings.push(...claimAudit.warnings);
   }
 
   const unique = [...new Set(blockers)];

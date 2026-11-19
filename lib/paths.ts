@@ -51,6 +51,8 @@ export const MANUSCRIPT_DIR = path.join(LIB, '稿件');
 export const MATERIAL_DIR = path.join(MANUSCRIPT_DIR, '素材');
 /** 自动封面落点（autopilot 封面产出） */
 export const COVER_DIR = path.join(MATERIAL_DIR, '自动封面');
+/** 自动正文配图落点（autopilot 配图产出，替换正文【图 N】占位符） */
+export const FIGURE_DIR = path.join(MATERIAL_DIR, '自动配图');
 
 /**
  * 状态库目录。

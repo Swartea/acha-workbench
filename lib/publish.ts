@@ -61,9 +61,12 @@ export function latestDryRunHtml(): string | null {
     .readdirSync(tmp, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => {
-      const p = path.join(tmp, d.name);
+      const p = path.resolve(tmp, d.name);
+      // readdir 条目本不含分隔符，这里显式锚定以防扫描器盲区
+      if (!p.startsWith(tmp + path.sep)) return null;
       return { p, t: fs.statSync(p).mtimeMs };
     })
+    .filter((x): x is { p: string; t: number } => x !== null)
     .sort((a, b) => b.t - a.t);
   for (const d of dirs) {
     const h = path.join(d.p, 'preview.html');

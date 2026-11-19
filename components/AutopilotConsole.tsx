@@ -67,6 +67,35 @@ export interface CheckView {
   };
 }
 
+export interface FigureView {
+  slot: string;
+  title: string;
+  file: string;
+  rel: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+export interface FiguresView {
+  ok: boolean;
+  figures: FigureView[];
+  warnings: string[];
+  error?: string;
+}
+
+export interface LayoutCheckView {
+  id: string;
+  label: string;
+  pass: boolean;
+  detail: string;
+}
+
+export interface LayoutView {
+  checks: LayoutCheckView[];
+  warnings: string[];
+}
+
 export interface AutopilotDetailView {
   run: AutopilotRunView;
   events: AutopilotEventView[];
@@ -74,6 +103,8 @@ export interface AutopilotDetailView {
   research: string;
   checks: CheckView | null;
   cover: CoverView | null;
+  figures: FiguresView | null;
+  layout: LayoutView | null;
   files: string[];
 }
 
@@ -84,7 +115,9 @@ const STAGES = [
   ['draft', '写稿'],
   ['check', '检查'],
   ['revise', '返工'],
+  ['figures', '配图'],
   ['cover', '封面'],
+  ['layout', '排版'],
   ['save', '交付'],
   ['done', '完成'],
 ] as const;
@@ -115,7 +148,8 @@ export default function AutopilotConsole({
   const [selected, setSelected] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [model, setModel] = useState<'kimi' | 'minimax'>('kimi');
+  const MODELS = ['kimi', 'minimax', 'glm', 'deepseek'] as const;
+  const [model, setModel] = useState<(typeof MODELS)[number]>('kimi');
 
   const refresh = useCallback(async (forceLatest = false) => {
     try {
@@ -197,7 +231,11 @@ export default function AutopilotConsole({
           <button className="btn primary" disabled={busy || running} onClick={start}>
             {busy ? '启动中…' : running ? '正在写…' : '开始一篇（' + model + '）'}
           </button>
-          <button className="btn" disabled={busy || running} onClick={() => setModel(model === 'kimi' ? 'minimax' : 'kimi')}>
+          <button
+            className="btn"
+            disabled={busy || running}
+            onClick={() => setModel(MODELS[(MODELS.indexOf(model) + 1) % MODELS.length])}
+          >
             切换模型：{model}
           </button>
           <button className="btn" disabled={busy} onClick={() => void refresh()}>刷新</button>
@@ -243,6 +281,47 @@ export default function AutopilotConsole({
               );
             })}
           </div>
+
+          {detail.figures && detail.figures.figures.length > 0 && (
+            <div style={{ margin: '4px 0 14px' }}>
+              <div className="tiny faint" style={{ marginBottom: 6 }}>
+                正文配图 {detail.figures.figures.length} 张
+                {detail.figures.figures.map((f) => `${f.slot} ${f.width}×${f.height}`).join(' · ')}
+              </div>
+              {detail.figures.figures.map((f) => (
+                <img
+                  key={f.slot}
+                  src={'/api/asset?p=' + encodeURIComponent(f.rel)}
+                  alt={f.title}
+                  style={{ width: '100%', maxWidth: 720, borderRadius: 10, border: '1px solid var(--line)', display: 'block', marginBottom: 10 }}
+                />
+              ))}
+            </div>
+          )}
+
+          {detail.layout && (
+            <details style={{ marginBottom: 12 }}>
+              <summary className="small" style={{ cursor: 'pointer' }}>
+                排版预检（{detail.layout.checks.filter((c) => !c.pass).length} 项提醒）
+              </summary>
+              <div className="table-wrap" style={{ marginTop: 8 }}>
+                <table className="table">
+                  <thead>
+                    <tr><th>状态</th><th>检查项</th><th>结果</th></tr>
+                  </thead>
+                  <tbody>
+                    {detail.layout.checks.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.pass ? '✅' : '⚠️'}</td>
+                        <td>{c.label}</td>
+                        <td className="tiny">{c.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
 
           {checks && (
             <div className="hero-note" style={{ marginBottom: 12 }}>
@@ -343,9 +422,6 @@ export default function AutopilotConsole({
             </div>
           </details>
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-            {detail.run.article_file && <a className="btn" href="/manuscripts">去稿件库</a>}
-          </div>
         </section>
       )}
 

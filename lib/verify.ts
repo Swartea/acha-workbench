@@ -94,8 +94,9 @@ export function normalizeClaim(s: string): string {
   return s.replace(/[，,\s]/g, '').toLowerCase();
 }
 
+/** 核对记录的稳定键：sha256 截 16 位（2026-11-19 起；此前为 sha1，表内无存量行，直接换算法）。 */
 export function claimKey(articleId: string, text: string): string {
-  return crypto.createHash('sha1').update(articleId + '::' + normalizeClaim(text)).digest('hex').slice(0, 16);
+  return crypto.createHash('sha256').update(articleId + '::' + normalizeClaim(text)).digest('hex').slice(0, 16);
 }
 
 /** 只按文本特征分类，不猜内容。顺序即优先级：价格 > 版本 > 日期 > 数字 > 引语。 */
